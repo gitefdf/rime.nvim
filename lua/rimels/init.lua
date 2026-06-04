@@ -1,193 +1,156 @@
-local cmp_ok, cmp = pcall(require, "cmp")
-if not cmp_ok then
-  vim.notify("nvim-cmp not installed", vim.log.levels.ERROR)
-  error()
-end
-
--- nvim-cmp supports additional completion capabilities, so broadcast that to servers
-local capabilities = vim.lsp.protocol.make_client_capabilities()
-local status_ok, cmp_nvim_lsp = pcall(require, "cmp_nvim_lsp")
-if status_ok then
-  capabilities = cmp_nvim_lsp.default_capabilities(capabilities)
-end
-
--- Fix: Offset-Encoding issue since Neovim v0.10.2 #38
--- https://github.com/wlh320/rime-ls/issues/38#issuecomment-2559780016
-if vim.fn.has "nvim-0.10.2" == 1 and vim.fn.has "nvim-0.11.0" == 0 then
-  if capabilities.general then
-    capabilities.general.positionEncodings = { "utf-8" }
-  else
-    capabilities.general = {
-      positionEncodings = { "utf-8" },
-    }
-  end
-end
-
+--- Rimels plugin main module
+--- Provides setup and configuration for the rime input method integration
 local utils = require "rimels.utils"
-local default_opts = require "rimels.default_opts"
-local probes = require "rimels.probes"
-local detectors = require "rimels.english_environment_detectors"
-local cmp_keymaps = require "rimels.cmp_keymaps"
-
-local update_option = function(default, user)
-  if not (user and next(user)) then
-    return default
-  end
-
-  local updated_default = {}
-  for key, value in pairs(default) do
-    if user[key] then
-      if key == "cmd" and type(user[key]) == "string" then
-        updated_default[key] = { user[key] }
-      elseif key == "cmd" and type(user[key]) == "function" then
-        updated_default[key] = user[key]
-      elseif type(user[key]) ~= type(value) then
-        error(key .. " must be " .. type(value))
-      elseif type(value) == "table" then
-        updated_default[key] = vim.tbl_extend("force", value, user[key])
-      else
-        updated_default[key] = user[key]
-      end
-    else
-      updated_default[key] = value -- 如果 user 表格中没有对应 key，则保持默认值不变
-    end
-  end
-
-  return updated_default
-end
-
-local function start_rime_ls(iters)
-  local bufnr = vim.api.nvim_get_current_buf()
-  local client = utils.buf_get_rime_ls_client(bufnr)
-  vim.cmd "stopinsert"
-
-  if not client then
-    utils.buf_attach_rime_ls(bufnr)
-    -- Solve the problem that the input method cannot take effect immediately
-    -- when starting for the first time
-    iters = iters or 0
-    if iters <= 100 then
-      vim.schedule(function()
-        start_rime_ls(iters + 1)
-      end)
-    end
-    return
-  end
-
-  if not utils.global_rime_enabled() then
-    utils.toggle_rime(client)
-  end
-
-  if not utils.buf_rime_enabled() then
-    utils.buf_toggle_rime(bufnr, true)
-  end
-
-  vim.fn.feedkeys("a", "n")
-end
-
+local has_setup = false
 local M = {}
 
+--- Setup the rimels plugin with provided options
+--- @param opts table|nil Configuration options for the plugin
+--- @return table The module table for method chaining
 function M.setup(opts)
-  local lspconfig = require "lspconfig"
-  local configs = require "lspconfig.configs"
-  if M.get_rime_ls_client() then
-    return M.opts
+  -- Prevent multiple setup calls
+  if has_setup then
+    return M
   end
-  opts = update_option(default_opts, opts or {})
+  has_setup = true
 
-  for name, probe in pairs(probes) do
-    if vim.fn.index(opts.probes.ignore, name) < 0 then
-      opts.probes.using[name] = probe
-    end
-  end
+  -- Merge user options with defaults
+  opts = require("rimels.config").update_option(opts or {})
 
-  opts.probes.using =
-    vim.tbl_extend("force", opts.probes.using, opts.probes.add)
+  -- Initialize rime language server
+  utils.rime_ls_setup(opts)
 
-  opts.detectors = {
-    with_treesitter = vim.tbl_extend(
-      "force",
-      detectors.with_treesitter,
-      opts.detectors.with_treesitter or {}
-    ),
-    with_syntax = vim.tbl_extend(
-      "force",
-      detectors.with_syntax,
-      opts.detectors.with_syntax or {}
-    ),
-  }
-
-  local rime_on_attach = function(client, _)
-    utils.create_command_toggle_rime(client)
-    utils.create_command_rime_sync()
-    utils.create_autocmd_toggle_rime_according_buffer_status(client)
-    utils.create_inoremap_start_rime(client, opts.keys.start)
-    utils.create_inoremap_stop_rime(client, opts.keys.stop)
-    utils.create_inoremap_esc(opts.keys.esc)
-    utils.create_inoremap_undo(opts.keys.undo)
-  end
-
-  if not configs.rime_ls then
-    configs.rime_ls = {
-      default_config = {
-        name = "rime_ls",
-        cmd = opts.cmd,
-        root_dir = function() end,
-        filetypes = opts.filetypes,
-        single_file_support = opts.single_file_support,
-      },
-      settings = opts.settings,
-      docs = {
-        description = opts.docs.description,
-      },
-    }
-  end
-
-  lspconfig.rime_ls.setup {
-    init_options = {
-      enabled = utils.global_rime_enabled(),
-      shared_data_dir = opts.shared_data_dir,
-      user_data_dir = opts.user_data_dir or opts.rime_user_dir,
-      log_dir = opts.rime_user_dir .. "/log",
-      max_candidates = opts.max_candidates,
-      trigger_characters = opts.trigger_characters,
-      schema_trigger_character = opts.schema_trigger_character,
-      always_incomplete = opts.always_incomplete,
-      paging_characters = opts.paging_characters,
-    },
-    on_attach = rime_on_attach,
-    capabilities = capabilities,
-  }
-
-  -- Configure how various keys respond
-  local keymaps = cmp_keymaps:setup({
-    probes = opts.probes.using,
-    detectors = opts.detectors,
-  }).keymaps
-  keymaps = utils.filter_cmp_keymaps(keymaps, opts.cmp_keymaps.disable)
-  if next(keymaps) then
-    cmp.setup { mapping = cmp.mapping.preset.insert(keymaps) }
-  end
-
-  vim.keymap.set({ "i" }, opts.keys.start, start_rime_ls, {
+  -- Setup input method toggle keymap
+  vim.keymap.set({ "i" }, opts.keys.start, utils.start_rime_ls, {
     silent = true,
     noremap = true,
     desc = "Toggle Input Method",
   })
 
-  lspconfig.rime_ls.launch()
+  -- Initialize and configure completion keymaps
+  M.keymaps = require("rimels.cmp_keymaps")
+    :setup({
+      probes = opts.probes.using,
+      detectors = opts.detectors,
+    })
+    :launch(opts.cmp_keymaps.disable)
 
+  -- Store configuration for later access
   M.opts = opts
-  return M.opts
+
+  -- Autocmd to enhance Blink completion behavior for numbers and punctuation with Rime
+  -- - When Blink shows completion (User BlinkCmpShow), if the last typed character is a number (1-9)
+  --   or a configured punctuation, perform a specific action using Rime utilities.
+  -- - Adds defensive checks and minimizes redundant lookups for clarity and robustness.
+
+  local api = vim.api
+
+  -- Create or reuse augroup once
+  local group = api.nvim_create_augroup("blink.lsp.rimels", { clear = true })
+
+  api.nvim_create_autocmd("User", {
+    group = group,
+    pattern = "BlinkCmpShow",
+    callback = vim.schedule_wrap(function(event)
+      local bufnr = (event and event.buf) or api.nvim_get_current_buf()
+      if
+        not utils.global_rime_enabled() or not utils.buf_rime_enabled(bufnr)
+      then
+        return
+      end
+
+      -- Extract completion context safely
+      local ctx = vim.tbl_get(event or {}, "data", "context")
+      if type(ctx) ~= "table" then
+        return
+      end
+      local line = ctx.line
+      local cursor = ctx.cursor
+      if type(line) ~= "string" or type(cursor) ~= "table" then
+        return
+      end
+
+      -- Get character at the cursor column (guard indices)
+      local col = tonumber(cursor[2])
+      if not col or col < 1 or col > #line then
+        return
+      end
+      local ch = line:sub(col, col)
+      if ch == "" then
+        return
+      end
+
+      -- Determine trigger type: number (1-9) or configured punctuation
+      local punctuation_list = (opts and opts.punctuation_upload_directly) or {}
+      local is_punctuation = vim.tbl_contains(punctuation_list, ch)
+      local is_number = not is_punctuation and (ch:match "[1-9]" ~= nil)
+
+      if not (is_number or is_punctuation) then
+        return
+      end
+
+      -- Retrieve Blink completion items safely
+      local ok, cmp = pcall(require, "blink.cmp")
+      if not ok or type(cmp.get_items) ~= "function" then
+        return
+      end
+      local items = cmp.get_items()
+      if type(items) ~= "table" or #items == 0 then
+        return
+      end
+
+      -- Execute corresponding action
+      vim.schedule(function()
+        if is_number then
+          local rime_id = utils.get_rime_entry_ids(items, { only = true })
+          if rime_id then
+            utils.cmp_select_nth(rime_id, items)
+          end
+        else -- punctuation
+          -- Note: function name kept as in original (cmp_confirm_punction)
+          utils.cmp_confirm_punction(items)
+        end
+      end)
+    end),
+  })
+
+  -- Autocmd to synchronize Rime input method status when entering a buffer
+  api.nvim_create_autocmd({ "BufEnter" }, {
+    group = group,
+    callback = function(event)
+      -- Extract buffer number from event, return early if invalid
+      local bufnr = event and event.buf
+      if not bufnr then
+        return
+      end
+
+      -- Ignore special buffers where Rime is not needed
+      local buftype = api.nvim_get_option_value("buftype", { buf = bufnr })
+      if buftype ~= "" then
+        return
+      end
+
+      -- Check global and buffer-specific Rime enabled statuses
+      local rime_status_global = utils.global_rime_enabled()
+      local rime_status_buf = utils.buf_rime_enabled(bufnr)
+
+      -- Toggle Rime if there's a mismatch between global and buffer statuses
+      if rime_status_buf ~= rime_status_global then
+        utils.toggle_rime()
+      end
+    end,
+  })
+
+  return M
 end
 
+--- Public API Functions ---
+
+--- Get the rime_ls LSP client if available
+--- @return table|nil The rime_ls client or nil if not found
 function M.get_rime_ls_client()
-  local client = vim.lsp.get_clients { name = "rime_ls" }
-  if #client == 0 then
-    return nil
-  else
-    return client
-  end
+  local clients = vim.lsp.get_clients { name = "rime_ls" }
+  return clients[1] -- Return first client or nil if none found
 end
 
 return M

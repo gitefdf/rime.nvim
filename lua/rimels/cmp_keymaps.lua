@@ -1,44 +1,6 @@
-local cmp         = require "cmp"
-local cmp_config  = require('cmp.config').get()
-local utils       = require "rimels.utils"
-local default_opts = require "rimels.default_opts"
-local punctuation_upload_directly = default_opts.punctuation_upload_directly
-local feedkey = function(key, mode)
-  vim.api.nvim_feedkeys(
-    vim.api.nvim_replace_termcodes(key, true, true, true),
-    mode,
-    false
-  )
-end
+local utils = require "rimels.utils"
 
-local get_input_code = function(entry)
-  return entry.completion_item.filterText
-end
-
-local get_cmp_result = function(entry)
-    return entry.completion_item.textEdit.newText
-end
-
-local is_eol = function()
-  return (vim.fn.col('.') == vim.fn.col('$'))
-end
-
-local is_rime_entry = function(entry)
-  return entry ~= nil
-    and vim.tbl_get(entry, "source", "name") == "nvim_lsp"
-    and vim.tbl_get(entry, "source", "source", "client", "name") == "rime_ls"
-    and get_input_code(entry) ~= get_cmp_result(entry)
-end
-
-local get_first_entry = function()
-  local entries = cmp.get_entries()
-  if entries and #entries > 0 then
-    return entries[1]
-  end
-end
-
-
-local M = {keymaps = cmp_config.mapping}
+local M = { keymaps = utils.get_mappings() }
 
 ---@class Keymap_setup_opts
 ---@field detectors table
@@ -61,22 +23,23 @@ function M:setup(opts)
   function self.in_english_environment()
     local detect_english_env = opts.detectors
     local info = vim.inspect_pos()
-    local filetype = vim.api.nvim_get_option_value("filetype", {scope = "local"})
+    local filetype =
+        vim.api.nvim_get_option_value("filetype", { scope = "local" })
 
     if not filetype or filetype == "" then
       return false
     end
 
     if
-      detect_english_env.with_treesitter[filetype] and
-      detect_english_env.with_treesitter[filetype](info)
+        detect_english_env.with_treesitter[filetype]
+        and detect_english_env.with_treesitter[filetype](info)
     then
       return true
     end
 
     if
-      detect_english_env.with_syntax[filetype] and
-      detect_english_env.with_syntax[filetype](info)
+        detect_english_env.with_syntax[filetype]
+        and detect_english_env.with_syntax[filetype](info)
     then
       return true
     end
@@ -90,7 +53,7 @@ end
 function M.autotoggle_backspace()
   local rc = { not_toggle = 0, toggle_off = 1, toggle_on = 2 }
   if not utils.buf_rime_enabled() or M.in_english_environment() then
-    return rc.NOT_TOGGLE
+    return rc.not_toggle
   end
 
   -- 只有在删除空格时才启用输入法切换功能
@@ -121,6 +84,43 @@ function M.autotoggle_backspace()
   end
 end
 
+function M.autotoggle_space()
+  if not utils.buf_rime_enabled() then
+    return
+  end
+  local rc = { not_toggle = 0, toggle_off = 1, toggle_on = 2 }
+  if not utils.buf_rime_enabled() or M.in_english_environment() then
+    return rc.not_toggle
+  end
+
+  -- 行首输入空格或输入连续空格时不考虑输入法切换
+  local word_before = utils.get_chars_before_cursor(1)
+  if not word_before or word_before == " " then
+    return rc.not_toggle
+  end
+
+  -- 在英文输入状态下，如果光标后为英文符号，则不切换成中文输入状态
+  -- 例如：(abc|)
+  local char_after = utils.get_chars_after_cursor(1)
+  if not utils.global_rime_enabled() and char_after:match "[!-~]" then
+    return rc.not_toggle
+  end
+
+  -- 最后一个字符为英文字符，数字或标点符号时，切换为中文输入法
+  -- 否则切换为英文输入法
+  if word_before:match "[%w%p]" then
+    if not utils.global_rime_enabled() then
+      utils.toggle_rime()
+    end
+    return rc.toggle_on
+  else
+    if utils.global_rime_enabled() then
+      utils.toggle_rime()
+    end
+    return rc.toggle_off
+  end
+end
+
 function M.input_method_take_effect(entry, probes_ignored)
   if not entry then
     return false
@@ -132,12 +132,7 @@ function M.input_method_take_effect(entry, probes_ignored)
       vim.log.levels.ERROR
     )
   end
-  if
-    entry.source.name == "nvim_lsp"
-    and entry.source.source.client.name == "rime_ls"
-    and M.passed_all_probes(probes_ignored)
-  then
-    if get_input_code(entry) == get_cmp_result(entry) then return false end
+  if utils.is_rime_entry(entry) and M.passed_all_probes(probes_ignored) then
     return true
   else
     return false
@@ -145,223 +140,203 @@ function M.input_method_take_effect(entry, probes_ignored)
 end
 
 -- number --------------------------------------------------------------- {{{3
-for numkey = 0, 9 do
+for numkey = 1, 9 do
   local numkey_str = tostring(numkey)
-  M.keymaps[numkey_str] = cmp.mapping(function(fallback)
-    if not cmp.visible() or not utils.buf_rime_enabled() then
-      return fallback()
-    end
-
-    -- close the cmp menu when 0 is pressed and all entries are from rime-ls
-    if numkey == 0 then
-      fallback()
-      return vim.schedule(function()
-        local entries = cmp.get_entries()
-        for _, entry in ipairs(entries) do
-          if not is_rime_entry(entry) then
-            return
-          end
-        end
-        cmp.close()
-      end)
-    end
-
-    feedkey(numkey_str, "n")
-    return vim.schedule(function()
-      if not cmp.visible() then return end
-      local entries = cmp.get_entries() or {}
-      local rime_entry_id = 0
-      for id, entry in ipairs(entries) do
-        if is_rime_entry(entry) then
-          if rime_entry_id ~= 0 then
-            return
-          end
-          rime_entry_id = id
-        end
-      end
-
-      if rime_entry_id == 0 then return end
-      for _ = 1, rime_entry_id do
-        cmp.select_next_item { behavior = cmp.SelectBehavior.Select }
-      end
-
-      vim.api.nvim_buf_set_var(0, 'rimels_last_entry', entries[rime_entry_id].completion_item)
-      cmp.confirm { behavior = cmp.ConfirmBehavior.Insert }
-    end)
-  end, { "i" })
-end
-
--- <symbol> ------------------------------------------------------------- {{{3
-for _, symbol in ipairs(punctuation_upload_directly) do
-  M.keymaps[symbol] = cmp.mapping(function(fallback)
+  M.keymaps[numkey_str] = utils.generate_mapping(function(_)
     if not utils.buf_rime_enabled() then
-      return fallback()
+      return utils.fallback(numkey_str)
     end
-
-    if cmp.visible() then
-      return fallback()
-    end
-
-    fallback()
-    vim.schedule(function()
-      if not cmp.visible() then return end
-      local entries = cmp.get_entries()
-      if entries and #entries == 1 then
-        -- check character before the punctuation
-        local word_before = utils.get_chars_before_cursor(2)
-        if not word_before or word_before == "" or word_before:match "[%s%w%p]" then
-          cmp.close()
-        else
-          vim.api.nvim_buf_set_var(0, 'rimels_last_entry', entries[1].completion_item)
-          cmp.confirm { behavior = cmp.ConfirmBehavior.Insert, select = true}
-        end
+    if not utils.is_cmp_visible() then
+      if utils.global_rime_enabled() then
+        utils.toggle_rime(utils.buf_get_rime_ls_client(), true)
       end
-    end)
-    return nil
+      return utils.fallback(numkey_str)
+    end
+    utils.feedkey(numkey_str, "n")
+    return utils.cmp_without_processing()
   end)
 end
 
 -- <Space> -------------------------------------------------------------- {{{3
-M.keymaps["<Space>"] = cmp.mapping(function(fallback)
-  pcall(vim.api.nvim_buf_del_var, 0, 'rimels_last_entry')
-  if not cmp.visible() then
-    return fallback()
+M.keymaps["<Space>"] = utils.generate_mapping(function(_)
+  pcall(vim.api.nvim_buf_del_var, 0, "rimels_last_entry")
+  if not utils.is_cmp_visible() then
+    M.autotoggle_space()
+    return utils.fallback("<Space>")
   end
-  local select_entry = cmp.get_selected_entry()
-  local first_entry = get_first_entry()
+
+  local select_entry = utils.get_selected_entry()
+  local first_entry = utils.get_first_entry()
 
   if select_entry then
-    if
-      select_entry.source.name == "nvim_lsp"
-      and select_entry.source.source.client.name == "rime_ls"
-    then
-      return cmp.confirm { behavior = cmp.ConfirmBehavior.Insert, select = false }
+    if utils.is_rime_entry(select_entry) then
+      utils.cmp_confirm(false)
     else
-      return fallback()
+      M.autotoggle_space()
+      return utils.fallback("<Space>")
     end
   end
 
   if M.input_method_take_effect(first_entry) then
-    local input_code = get_input_code(first_entry)
-    local cmp_result = get_cmp_result(first_entry)
-    -- 临时解决 * 和 [ 被错误吃掉的问题，会跟随 rime-ls 的更新调整
-    local special_symbol_pattern = '[%[%]{}]'
-    local other_symbol_pattern   = '[^%[%]{}]'
-    if input_code:match(special_symbol_pattern .. '[A-Za-z]') then
-      local pattern = string.format("^.*(%s)%s+$", special_symbol_pattern, other_symbol_pattern)
-      local prefix = input_code:gsub(pattern, "%1")
-      if prefix:sub(1,1) == prefix:sub(2,2) and prefix:sub(1,1):match(special_symbol_pattern)
-      then
-        prefix = prefix:sub(2)
+    local new_result = utils.adjust_for_rimels(first_entry)
+    if new_result then
+      first_entry.label = new_result
+      if first_entry and first_entry.textEdit then
+        first_entry.textEdit.newText = new_result
       end
-      first_entry.completion_item.textEdit.newText = prefix .. cmp_result
     end
-    vim.api.nvim_buf_set_var(0, 'rimels_last_entry', first_entry.completion_item)
-    return cmp.confirm { behavior = cmp.ConfirmBehavior.Insert, select = true }
+    utils.set_last_entry(first_entry)
+    return utils.cmp_confirm(true)
   end
 
-  return fallback()
-end, { "i", "s" })
+  M.autotoggle_space()
+  return utils.fallback("<Space>")
+end)
 
 -- <CR> ----------------------------------------------------------------- {{{3
-M.keymaps["<CR>"] = cmp.mapping(function(fallback)
-  if not cmp.visible() then
-    return (fallback())
+M.keymaps["<CR>"] = utils.generate_mapping(function(_)
+  if not utils.is_cmp_visible() then
+    return utils.fallback("<CR>")
   end
 
-  local select_entry = cmp.get_selected_entry()
-  local first_entry = get_first_entry()
+  local select_entry = utils.get_selected_entry()
+  local first_entry = utils.get_first_entry()
   local entry = select_entry or first_entry
 
   if not entry then
-    return (fallback())
+    return utils.fallback("<CR>")
   end
 
   if M.input_method_take_effect(entry, "all") then
     if M.in_english_environment() then
       utils.toggle_rime()
     end
-    cmp.abort()
-    feedkey(" ", "n")
-  elseif select_entry and select_entry.source.name ~= "nvim_lsp_signature_help" then
-    return cmp.confirm { behavior = cmp.ConfirmBehavior.Insert, select = true }
+    utils.cmp_close()
+    utils.feedkey(" ", "n")
+  elseif
+      select_entry
+      and utils.get_cmp_source_name(select_entry) ~= "nvim_lsp_signature_help"
+  then
+    return utils.cmp_confirm(true)
   else
-    cmp.abort()
+    return utils.cmp_close()
   end
-end, { "i", "s" })
+
+  return utils.cmp_without_processing()
+end)
 
 -- [: 实现 rime 选词定字，选中词的第一个字 ------------------------------ {{{3
-M.keymaps["["] = cmp.mapping(function(fallback)
-  if not cmp.visible() then
-    return (fallback())
+M.keymaps["["] = utils.generate_mapping(function(_)
+  if not utils.is_cmp_visible() then
+    return utils.fallback("[")
   end
 
-  local select_entry = cmp.get_selected_entry()
-  local first_entry = get_first_entry()
+  local select_entry = utils.get_selected_entry()
+  local first_entry = utils.get_first_entry()
   local entry = select_entry or first_entry
 
   if not entry then
-    return (fallback())
+    return utils.fallback("[")
   end
 
   if M.input_method_take_effect(entry) then
-    local text = entry.completion_item.textEdit.newText
+    local text = utils.get_cmp_result(entry)
     text = vim.fn.split(text, "\\zs")[1]
-    cmp.abort()
-    if is_eol() then
-      vim.cmd [[normal diw]]
-    else
-      vim.cmd [[normal hdiwh]]
-    end
-    vim.api.nvim_put({ text }, "c", true, true)
+    utils.cmp_close()
+    vim.schedule(function()
+      local input =
+          utils.get_input_code(entry):gsub("[^\1-\127]*([\1-\127]+)$", "%1")
+      vim.api.nvim_put({ text }, "c", true, true)
+      utils.feedkey("<left>", "n")
+      for _ = 1, input:len() do
+        utils.feedkey("<bs>", "n")
+      end
+      utils.feedkey("<right>", "n")
+    end)
   else
-    fallback()
+    return utils.fallback("[")
   end
-end, { "i", "s" })
+
+  return utils.cmp_without_processing()
+end)
 
 -- ]: 实现 rime 选词定字，选中词的最后一个字 ------------------------------ {{{3
-M.keymaps["]"] = cmp.mapping(function(fallback)
-  if not cmp.visible() then
-    return (fallback())
+M.keymaps["]"] = utils.generate_mapping(function(_)
+  if not utils.is_cmp_visible() then
+    return utils.fallback("]")
   end
 
-  local select_entry = cmp.get_selected_entry()
-  local first_entry = get_first_entry()
+  local select_entry = utils.get_selected_entry()
+  local first_entry = utils.get_first_entry()
   local entry = select_entry or first_entry
 
   if not entry then
-    return (fallback())
+    return utils.fallback("]")
   end
 
   if M.input_method_take_effect(entry) then
-    local text = entry.completion_item.textEdit.newText
+    local text = utils.get_cmp_result(entry)
     text = vim.fn.split(text, "\\zs")
     text = text[#text]
-    cmp.abort()
-    if is_eol() then
-      vim.cmd [[normal diw]]
-    else
-      vim.cmd [[normal hdiwh]]
-    end
-    vim.api.nvim_put({ text }, "c", true, true)
+    utils.cmp_close()
+
+    vim.schedule(function()
+      local input =
+          utils.get_input_code(entry):gsub("[^\1-\127]*([\1-\127]+)$", "%1")
+      vim.api.nvim_put({ text }, "c", true, true)
+      utils.feedkey("<left>", "n")
+      for _ = 1, input:len() do
+        utils.feedkey("<bs>", "n")
+      end
+      utils.feedkey("<right>", "n")
+    end)
   else
-    fallback()
+    return utils.fallback("]")
   end
-end, { "i", "s" })
+
+  return utils.cmp_without_processing()
+end)
 
 -- <bs> ----------------------------------------------------------------- {{{3
-M.keymaps["<BS>"] = cmp.mapping(function(fallback)
-  if not cmp.visible() then
+M.keymaps["<BS>"] = utils.generate_mapping(function(_)
+  if not utils.is_cmp_visible() then
     local re = M.autotoggle_backspace()
     if re == 1 then
-      cmp.abort()
-      feedkey("<left>", "n")
+      utils.cmp_close()
+      utils.feedkey("<left>", "n")
     else
-      fallback()
+      return utils.fallback("<BS>")
     end
   else
-    fallback()
+    return utils.fallback("<BS>")
   end
-end, { "i", "s" })
+
+  return utils.cmp_without_processing()
+end)
+
+function M:launch(disable)
+  local mappings = utils.filter_cmp_keymaps(self.keymaps, disable or {})
+  if not next(mappings) then
+    return
+  end
+
+  vim.api.nvim_create_autocmd("InsertEnter", {
+    callback = function()
+      if not require("blink.cmp.config").enabled() then
+        return
+      end
+      utils.blink_apply_keymap(mappings)
+    end,
+  })
+
+  if
+      vim.api.nvim_get_mode().mode == "i"
+      and require("blink.cmp.config").enabled()
+  then
+    utils.blink_apply_keymap(mappings)
+  end
+
+  return mappings
+end
 
 return M

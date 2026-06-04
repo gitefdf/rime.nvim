@@ -1,12 +1,13 @@
 local M = {
-  filetypes = { 'NO_DEFAULT_FILETYPES' },
+  filetypes = { "NO_DEFAULT_FILETYPES" },
   cmd = { "/sbin/rime_ls" },
   single_file_support = true,
   settings = {},
   rime_user_dir = "~/.local/share/rime-ls",
   shared_data_dir = "/usr/share/rime-data",
-  paging_characters = {",", ".", "-", "="},
+  paging_characters = { ",", ".", "-", "=" },
   trigger_characters = {},
+  long_filter_text = false,
   always_incomplete = false,
   docs = {
     description = [[https://www.github.com/wlh320/rime-ls, A language server for librime]],
@@ -28,16 +29,16 @@ local M = {
     with_treesitter = {},
     with_syntax = {},
   },
-  punctuation_upload_directly = {",", ".", ":", "\\", "?", "!"},
+  punctuation_upload_directly = { ",", ".", ":", "\\", "?", "!" },
   cmp_keymaps = {
     disable = {
-      space     = false,
-      numbers   = false,
-      enter     = false,
-      brackets  = false,
+      space = false,
+      numbers = false,
+      enter = false,
+      brackets = false,
       backspace = false,
       punctuation_upload_directly = false,
-    }
+    },
   },
 }
 
