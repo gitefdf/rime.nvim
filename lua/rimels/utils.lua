@@ -79,7 +79,11 @@ function M.blink_apply_keymap(keys_to_commands)
               M.fallback(key)
               return
             elseif type(command) == "function" then
-              if command(blink) then
+              local ret = command(blink)
+              if ret then
+                if type(ret) == "string" then
+                  M.feedkey(ret, "n")
+                end
                 return
               end
             elseif blink[command] and blink[command]() then
