@@ -9,18 +9,24 @@ local M = {}
 local blink_cmp
 local blink_cmp_completion_list
 
----@return table
+---@return table|nil
 local function get_blink_cmp()
   if blink_cmp == nil then
-    blink_cmp = require "blink.cmp"
+    local ok, mod = pcall(require, "blink.cmp")
+    if ok then
+      blink_cmp = mod
+    end
   end
   return blink_cmp
 end
 
----@return table
+---@return table|nil
 local function get_completion_list()
   if blink_cmp_completion_list == nil then
-    blink_cmp_completion_list = require "blink.cmp.completion.list"
+    local ok, mod = pcall(require, "blink.cmp.completion.list")
+    if ok then
+      blink_cmp_completion_list = mod
+    end
   end
   return blink_cmp_completion_list
 end
@@ -73,37 +79,33 @@ function M.blink_apply_keymap(keys_to_commands)
   for key, commands in pairs(keys_to_commands) do
     -- Skip keys with no commands to avoid unnecessary mappings
     if #commands > 0 then
-      -- Set up the keymap with optimized callback
-      vim.api.nvim_buf_set_keymap(0, "i", key, "", {
-        callback = function()
-          -- Check if blink.cmp is currently enabled
-          if not blink_config.enabled() then
+      vim.keymap.set("i", key, function()
+        if not blink_config.enabled() then
+          M.fallback(key)
+          return
+        end
+
+        for _, command in ipairs(commands) do
+          if command == "fallback" then
             M.fallback(key)
             return
-          end
-
-          -- Execute commands in sequence until one succeeds
-          for _, command in ipairs(commands) do
-            if command == "fallback" then
-              M.fallback(key)
-              return
-            elseif type(command) == "function" then
-              local ret = command(blink)
-              if ret then
-                if type(ret) == "string" then
-                  text.feedkey(ret, "n")
-                end
-                return
+          elseif type(command) == "function" then
+            local ret = command(blink)
+            if ret then
+              if type(ret) == "string" then
+                text.feedkey(ret, "n")
               end
-            elseif blink[command] and blink[command]() then
               return
             end
+          elseif blink[command] and blink[command]() then
+            return
           end
-        end,
-        expr = false,
+        end
+      end, {
+        desc = DESC_PREFIX,
         silent = true,
         noremap = true,
-        desc = DESC_PREFIX,
+        buffer = 0,
       })
     end
   end

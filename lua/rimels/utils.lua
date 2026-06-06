@@ -21,8 +21,9 @@ load_and_merge "rimels.text"
 load_and_merge "rimels.cmp"
 load_and_merge "rimels.lsp"
 
--- 版本常量（直接定义以确保可靠性）
+-- 版本常量（直接定义以确保可靠性，pairs 迭代可能遗漏标量值）
 M.has_nvim_0_10_2 = vim.fn.has "nvim-0.10.2" == 1
 M.has_nvim_0_11 = vim.fn.has "nvim-0.11.0" == 1
+M.has_nvim_0_12 = vim.fn.has "nvim-0.12.0" == 1
 
 return M

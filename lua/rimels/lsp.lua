@@ -2,6 +2,7 @@
 --- 负责 rime_ls 的生命周期、配置、状态切换和 autocmd 创建
 
 local cmp = require "rimels.cmp"
+local text = require "rimels.text"
 
 local M = {}
 
@@ -39,9 +40,8 @@ function M.buf_attach_rime_ls(bufnr)
     return
   end
 
-  local rimels_clients = vim.lsp.get_clients { name = "rime_ls" }
-  if #rimels_clients > 0 then
-    local client = rimels_clients[1]
+  local client = M.get_any_rime_ls_client()
+  if client then
     vim.lsp.buf_attach_client(bufnr, client.id)
     return
   end
@@ -259,7 +259,6 @@ function M.create_inoremap_undo(key)
 
     local text_cmp = entry.textEdit.newText
     local text_input = entry.filterText
-    local text = require "rimels.text"
     local content_before = text.get_content_before_cursor(0) or ""
 
     -- Ensure the text before the cursor ends with the completed text
@@ -314,8 +313,8 @@ end
 --- 检查 Rime 输入法是否全局启用
 --- @return boolean
 function M.global_rime_enabled()
-  local exist, status = pcall(vim.api.nvim_get_var, GLOBAL_RIME_VAR)
-  return (exist and status)
+  local ok, val = pcall(vim.api.nvim_get_var, GLOBAL_RIME_VAR)
+  return ok and val == true
 end
 
 --- 启动 rime_ls（Neovim 版本兼容）

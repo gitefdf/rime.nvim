@@ -1,9 +1,12 @@
 local utils = require "rimels.utils"
 
-local M = { keymaps = utils.get_mappings() }
+local M = {}
 
 -- 模块级标记：避免兼容层未初始化时重复弹出警告
 local _warned_missing_setup = false
+
+-- 延迟加载 keymaps，避免模块加载时触发 blink.cmp 初始化
+local _keymaps_loaded = false
 
 ---@class Keymap_setup_opts
 ---@field detectors table
@@ -194,7 +197,7 @@ for numkey = 1, 9 do
     end
     if not utils.is_cmp_visible() then
       if utils.global_rime_enabled() then
-        utils.toggle_rime(utils.buf_get_rime_ls_client(), true)
+        utils.toggle_rime(utils.get_any_rime_ls_client(), true)
       end
       return utils.fallback(numkey_str)
     end
@@ -290,6 +293,8 @@ local function rime_take_char(key, position)
       return utils.fallback(key)
     end
 
+    -- 预取 inspect_pos 供 input_method_take_effect 使用
+    local info = vim.inspect_pos()
     local select_entry = utils.get_selected_entry()
     local first_entry = utils.get_first_entry()
     local entry = select_entry or first_entry
@@ -298,7 +303,7 @@ local function rime_take_char(key, position)
       return utils.fallback(key)
     end
 
-    if M.input_method_take_effect(entry) then
+    if M.input_method_take_effect(entry, nil, info) then
       local text = utils.get_cmp_result(entry)
       text = vim.fn.split(text, "\\zs")
       text = position == "last" and text[#text] or text[1]
@@ -342,6 +347,11 @@ M.keymaps["<BS>"] = utils.generate_mapping(function(_)
 end)
 
 function M:launch(disable)
+  -- 延迟加载 keymaps，避免模块载入时触发 blink.cmp 初始化
+  if not _keymaps_loaded then
+    self.keymaps = utils.get_mappings()
+    _keymaps_loaded = true
+  end
   local mappings = utils.filter_cmp_keymaps(self.keymaps, disable or {})
   if not next(mappings) then
     return

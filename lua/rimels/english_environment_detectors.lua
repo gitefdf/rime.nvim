@@ -4,7 +4,7 @@ function M.with_treesitter.norg(info)
   info = info or vim.inspect_pos()
   local trees = info.treesitter
   local extmarks = info.extmarks
-  local englist_env = false
+  local english_env = false
   for _, ts in ipairs(trees) do
     if
       ts.capture == "neorg.markup.variable" or
@@ -24,13 +24,13 @@ function M.with_treesitter.norg(info)
       return true
     end
   end
-  return englist_env
+  return english_env
 end
 
 function M.with_treesitter.markdown(info)
   info = info or vim.inspect_pos()
   local trees = info.treesitter
-  local englist_env = false
+  local english_env = false
   for _, ts in ipairs(trees) do
     if
       ts.capture == "markup.math" or
@@ -38,18 +38,18 @@ function M.with_treesitter.markdown(info)
     then
       return true
     elseif ts.capture == "markup.raw.block" then
-      englist_env = true
+      english_env = true
     elseif ts.capture == "comment" then
       return false
     end
   end
-  return englist_env
+  return english_env
 end
 
 function M.with_syntax.markdown(info)
   info = info or vim.inspect_pos()
   local syns = info.syntax
-  local englist_env = false
+  local english_env = false
   for _, syn in ipairs(syns) do
     local hl = syn.hl_group
     local hl_link = syn.hl_group_link
@@ -61,12 +61,12 @@ function M.with_syntax.markdown(info)
     then
       return true
     elseif hl == "pandocDelimitedCodeBlock" then
-      englist_env = true
+      english_env = true
     elseif hl_link == "Comment" then
       return false
     end
   end
-  return englist_env
+  return english_env
 end
 
 return M

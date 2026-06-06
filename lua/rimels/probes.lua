@@ -15,7 +15,8 @@ function M.probe_temporarily_disabled()
 end
 
 function M.probe_caps_start()
-  if utils.get_content_before_cursor():match "[A-Z][%w]*%s*$" then
+  local content = utils.get_content_before_cursor()
+  if content and content:match "[A-Z][%w]*%s*$" then
     return PROBE_BLOCK
   else
     return PROBE_ALLOW
@@ -52,7 +53,7 @@ function M.probe_in_mathblock(info)
       return PROBE_BLOCK
     end
   end
-  return PASS
+  return PROBE_ALLOW
 end
 
 return M
