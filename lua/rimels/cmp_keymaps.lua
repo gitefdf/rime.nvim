@@ -2,27 +2,34 @@ local utils = require "rimels.utils"
 
 local M = { keymaps = utils.get_mappings() }
 
+-- 模块级标记：避免兼容层未初始化时重复弹出警告
+local _warned_missing_setup = false
+
 ---@class Keymap_setup_opts
 ---@field detectors table
 ---@field probes table
 ---@param opts Keymap_setup_opts
 function M:setup(opts)
-  function self.passed_all_probes(probes_ignored)
+  --- 遍历所有探针，传入预取的 inspect_pos 信息
+  --- @param probes_ignored table|string
+  --- @param info table|nil 可选的 vim.inspect_pos() 结果，用于避免重复调用
+  function self.passed_all_probes(probes_ignored, info)
     if probes_ignored and probes_ignored == "all" then
       return true
     end
     probes_ignored = probes_ignored or {}
     for name, probe in pairs(opts.probes) do
-      if not vim.tbl_contains(probes_ignored, name) and probe() then
+      if not vim.tbl_contains(probes_ignored, name) and probe(info) then
         return false
       end
     end
     return true
   end
 
-  function self.in_english_environment()
-    local detect_english_env = opts.detectors
-    local info = vim.inspect_pos()
+  --- 判断光标是否处于英文环境（数学公式、代码块等）
+  --- @param info table|nil 可选的 vim.inspect_pos() 结果，避免重复调用
+  function self.in_english_environment(info)
+    -- 先检查 filetype 再决定是否需要昂贵的 vim.inspect_pos()
     local filetype =
         vim.api.nvim_get_option_value("filetype", { scope = "local" })
 
@@ -30,15 +37,24 @@ function M:setup(opts)
       return false
     end
 
+    local detect_english_env = opts.detectors
+    local has_treesitter = detect_english_env.with_treesitter[filetype] ~= nil
+    local has_syntax = detect_english_env.with_syntax[filetype] ~= nil
+
+    -- 只有配置了检测器才调用 vim.inspect_pos()
+    if has_treesitter or has_syntax then
+      info = info or vim.inspect_pos()
+    end
+
     if
-        detect_english_env.with_treesitter[filetype]
+        has_treesitter
         and detect_english_env.with_treesitter[filetype](info)
     then
       return true
     end
 
     if
-        detect_english_env.with_syntax[filetype]
+        has_syntax
         and detect_english_env.with_syntax[filetype](info)
     then
       return true
@@ -50,20 +66,27 @@ function M:setup(opts)
   return self
 end
 
-function M.autotoggle_backspace()
+--- @param info table|nil 可选的 vim.inspect_pos() 结果
+function M.autotoggle_backspace(info)
   local rc = { not_toggle = 0, toggle_off = 1, toggle_on = 2 }
-  if not utils.buf_rime_enabled() or M.in_english_environment() then
+  if not utils.buf_rime_enabled() or M.in_english_environment(info) then
+    return rc.not_toggle
+  end
+
+  -- 统一获取光标上下文，避免重复 API 调用
+  local ctx = utils.get_cursor_context()
+  if not ctx then
     return rc.not_toggle
   end
 
   -- 只有在删除空格时才启用输入法切换功能
-  local word_before_1 = utils.get_chars_before_cursor(1)
+  local word_before_1 = utils.get_chars_before_cursor(1, 1, ctx)
   if not word_before_1 or word_before_1 ~= " " then
     return rc.not_toggle
   end
 
   -- 删除连续空格或行首空格时不启动输入法切换功能
-  local word_before_2 = utils.get_chars_before_cursor(2)
+  local word_before_2 = utils.get_chars_before_cursor(2, 1, ctx)
   if not word_before_2 or word_before_2 == " " then
     return rc.not_toggle
   end
@@ -71,68 +94,91 @@ function M.autotoggle_backspace()
   -- 删除的空格前是一个空格分隔的 WORD ，或者处在英文输入环境下时，
   -- 切换成英文输入法
   -- 否则切换成中文输入法
-  if utils.is_typing_english(1) then
+  local client = utils.get_any_rime_ls_client()
+  if utils.is_typing_english(1, ctx) then
     if utils.global_rime_enabled() then
-      utils.toggle_rime()
+      utils.toggle_rime(client)
     end
     return rc.toggle_off
   else
     if not utils.global_rime_enabled() then
-      utils.toggle_rime()
+      utils.toggle_rime(client)
     end
     return rc.toggle_on
   end
 end
 
-function M.autotoggle_space()
-  if not utils.buf_rime_enabled() then
-    return
-  end
+--- @param info table|nil 可选的 vim.inspect_pos() 结果
+function M.autotoggle_space(info)
   local rc = { not_toggle = 0, toggle_off = 1, toggle_on = 2 }
-  if not utils.buf_rime_enabled() or M.in_english_environment() then
+  if not utils.buf_rime_enabled() or M.in_english_environment(info) then
+    return rc.not_toggle
+  end
+
+  -- 统一获取光标上下文，避免重复 nvim_win_get_cursor + nvim_get_current_line
+  local ctx = utils.get_cursor_context()
+  if not ctx then
     return rc.not_toggle
   end
 
   -- 行首输入空格或输入连续空格时不考虑输入法切换
-  local word_before = utils.get_chars_before_cursor(1)
+  local word_before = utils.get_chars_before_cursor(1, 1, ctx)
   if not word_before or word_before == " " then
     return rc.not_toggle
   end
 
   -- 在英文输入状态下，如果光标后为英文符号，则不切换成中文输入状态
   -- 例如：(abc|)
-  local char_after = utils.get_chars_after_cursor(1)
-  if not utils.global_rime_enabled() and char_after:match "[!-~]" then
+  local char_after = utils.get_chars_after_cursor(1, ctx)
+  if
+    not utils.global_rime_enabled()
+    and char_after
+    and char_after ~= ""
+    and char_after:match "[!-~]"
+  then
     return rc.not_toggle
   end
 
   -- 最后一个字符为英文字符，数字或标点符号时，切换为中文输入法
   -- 否则切换为英文输入法
+  local client = utils.get_any_rime_ls_client()
   if word_before:match "[%w%p]" then
     if not utils.global_rime_enabled() then
-      utils.toggle_rime()
+      utils.toggle_rime(client)
     end
     return rc.toggle_on
   else
     if utils.global_rime_enabled() then
-      utils.toggle_rime()
+      utils.toggle_rime(client)
     end
     return rc.toggle_off
   end
 end
 
-function M.input_method_take_effect(entry, probes_ignored)
+--- 判断输入法候选词是否应该上屏
+--- 统一获取一次 vim.inspect_pos() 结果，传给所有探针避免重复调用
+--- @param entry table 补全条目
+--- @param probes_ignored table|string 忽略的探针列表
+--- @param info table|nil 可选的 vim.inspect_pos() 结果，由调用方预取
+--- @return boolean
+function M.input_method_take_effect(entry, probes_ignored, info)
   if not entry then
     return false
   end
 
   if not M.passed_all_probes then
-    vim.notify(
-      "Need rume require('rime.cmp_keympas').set_probes() fisrt",
-      vim.log.levels.ERROR
-    )
+    if not _warned_missing_setup then
+      _warned_missing_setup = true
+      vim.notify(
+        "rimels: 请先调用 :setup() 完成 probes 初始化",
+        vim.log.levels.WARN
+      )
+    end
+    return false
   end
-  if utils.is_rime_entry(entry) and M.passed_all_probes(probes_ignored) then
+  -- 使用预取结果或获取（当调用方未提供时）
+  info = info or vim.inspect_pos()
+  if utils.is_rime_entry(entry) and M.passed_all_probes(probes_ignored, info) then
     return true
   else
     return false
@@ -159,12 +205,18 @@ end
 
 -- <Space> -------------------------------------------------------------- {{{3
 M.keymaps["<Space>"] = utils.generate_mapping(function(_)
-  pcall(vim.api.nvim_buf_del_var, 0, "rimels_last_entry")
+  -- 仅在变量存在时才清理，避免每次空格都触发 pcall 异常处理
+  if pcall(vim.api.nvim_buf_get_var, 0, "rimels_last_entry") then
+    vim.api.nvim_buf_del_var(0, "rimels_last_entry")
+  end
   if not utils.is_cmp_visible() then
-    M.autotoggle_space()
+    M.autotoggle_space() -- info 不传，内部按需获取
     return utils.fallback("<Space>")
   end
 
+  -- 补全可见时预取 inspect_pos，后续 autotoggle_space 和
+  -- input_method_take_effect 可共享，避免重复昂贵调用
+  local info = vim.inspect_pos()
   local select_entry = utils.get_selected_entry()
   local first_entry = utils.get_first_entry()
 
@@ -172,12 +224,12 @@ M.keymaps["<Space>"] = utils.generate_mapping(function(_)
     if utils.is_rime_entry(select_entry) then
       utils.cmp_confirm(false)
     else
-      M.autotoggle_space()
+      M.autotoggle_space(info)
       return utils.fallback("<Space>")
     end
   end
 
-  if M.input_method_take_effect(first_entry) then
+  if M.input_method_take_effect(first_entry, nil, info) then
     local new_result = utils.adjust_for_rimels(first_entry)
     if new_result then
       first_entry.label = new_result
@@ -189,7 +241,7 @@ M.keymaps["<Space>"] = utils.generate_mapping(function(_)
     return utils.cmp_confirm(true)
   end
 
-  M.autotoggle_space()
+  M.autotoggle_space(info)
   return utils.fallback("<Space>")
 end)
 
@@ -199,6 +251,8 @@ M.keymaps["<CR>"] = utils.generate_mapping(function(_)
     return utils.fallback("<CR>")
   end
 
+  -- 预取 inspect_pos，input_method_take_effect 和 in_english_environment 共享
+  local info = vim.inspect_pos()
   local select_entry = utils.get_selected_entry()
   local first_entry = utils.get_first_entry()
   local entry = select_entry or first_entry
@@ -207,9 +261,9 @@ M.keymaps["<CR>"] = utils.generate_mapping(function(_)
     return utils.fallback("<CR>")
   end
 
-  if M.input_method_take_effect(entry, "all") then
-    if M.in_english_environment() then
-      utils.toggle_rime()
+  if M.input_method_take_effect(entry, "all", info) then
+    if M.in_english_environment(info) then
+      utils.toggle_rime(utils.get_any_rime_ls_client())
     end
     utils.cmp_close()
     utils.feedkey(" ", "n")
@@ -225,77 +279,48 @@ M.keymaps["<CR>"] = utils.generate_mapping(function(_)
   return utils.cmp_without_processing()
 end)
 
--- [: 实现 rime 选词定字，选中词的第一个字 ------------------------------ {{{3
-M.keymaps["["] = utils.generate_mapping(function(_)
-  if not utils.is_cmp_visible() then
-    return utils.fallback("[")
-  end
+-- rime 选词定字：从候选词中取第一个字或最后一个字 ----------------------- {{{3
+--- @param key string 原始按键（用于 fallback）
+--- @param position 1|"last" 取第一个字(1)或最后一个字("last")
+local function rime_take_char(key, position)
+  return utils.generate_mapping(function(_)
+    if not utils.is_cmp_visible() then
+      return utils.fallback(key)
+    end
 
-  local select_entry = utils.get_selected_entry()
-  local first_entry = utils.get_first_entry()
-  local entry = select_entry or first_entry
+    local select_entry = utils.get_selected_entry()
+    local first_entry = utils.get_first_entry()
+    local entry = select_entry or first_entry
 
-  if not entry then
-    return utils.fallback("[")
-  end
+    if not entry then
+      return utils.fallback(key)
+    end
 
-  if M.input_method_take_effect(entry) then
-    local text = utils.get_cmp_result(entry)
-    text = vim.fn.split(text, "\\zs")[1]
-    utils.cmp_close()
-    vim.schedule(function()
-      local input =
-          utils.get_input_code(entry):gsub("[^\1-\127]*([\1-\127]+)$", "%1")
-      vim.api.nvim_put({ text }, "c", true, true)
-      utils.feedkey("<left>", "n")
-      for _ = 1, input:len() do
-        utils.feedkey("<bs>", "n")
-      end
-      utils.feedkey("<right>", "n")
-    end)
-  else
-    return utils.fallback("[")
-  end
+    if M.input_method_take_effect(entry) then
+      local text = utils.get_cmp_result(entry)
+      text = vim.fn.split(text, "\\zs")
+      text = position == "last" and text[#text] or text[1]
+      utils.cmp_close()
+      vim.schedule(function()
+        local input =
+            utils.get_input_code(entry):gsub("[^\1-\127]*([\1-\127]+)$", "%1")
+        vim.api.nvim_put({ text }, "c", true, true)
+        utils.feedkey("<left>", "n")
+        for _ = 1, input:len() do
+          utils.feedkey("<bs>", "n")
+        end
+        utils.feedkey("<right>", "n")
+      end)
+    else
+      return utils.fallback(key)
+    end
 
-  return utils.cmp_without_processing()
-end)
+    return utils.cmp_without_processing()
+  end)
+end
 
--- ]: 实现 rime 选词定字，选中词的最后一个字 ------------------------------ {{{3
-M.keymaps["]"] = utils.generate_mapping(function(_)
-  if not utils.is_cmp_visible() then
-    return utils.fallback("]")
-  end
-
-  local select_entry = utils.get_selected_entry()
-  local first_entry = utils.get_first_entry()
-  local entry = select_entry or first_entry
-
-  if not entry then
-    return utils.fallback("]")
-  end
-
-  if M.input_method_take_effect(entry) then
-    local text = utils.get_cmp_result(entry)
-    text = vim.fn.split(text, "\\zs")
-    text = text[#text]
-    utils.cmp_close()
-
-    vim.schedule(function()
-      local input =
-          utils.get_input_code(entry):gsub("[^\1-\127]*([\1-\127]+)$", "%1")
-      vim.api.nvim_put({ text }, "c", true, true)
-      utils.feedkey("<left>", "n")
-      for _ = 1, input:len() do
-        utils.feedkey("<bs>", "n")
-      end
-      utils.feedkey("<right>", "n")
-    end)
-  else
-    return utils.fallback("]")
-  end
-
-  return utils.cmp_without_processing()
-end)
+M.keymaps["["] = rime_take_char("[", 1)
+M.keymaps["]"] = rime_take_char("]", "last")
 
 -- <bs> ----------------------------------------------------------------- {{{3
 M.keymaps["<BS>"] = utils.generate_mapping(function(_)
@@ -320,9 +345,19 @@ function M:launch(disable)
     return
   end
 
+  -- 安全检查：确保 blink.cmp 可用再注册 autocmd
+  local ok, blink_config = pcall(require, "blink.cmp.config")
+  if not ok then
+    vim.notify(
+      "rimels: 未检测到 blink.cmp，请确保已安装 blink.cmp 插件",
+      vim.log.levels.WARN
+    )
+    return
+  end
+
   vim.api.nvim_create_autocmd("InsertEnter", {
     callback = function()
-      if not require("blink.cmp.config").enabled() then
+      if not blink_config.enabled() then
         return
       end
       utils.blink_apply_keymap(mappings)
@@ -331,7 +366,7 @@ function M:launch(disable)
 
   if
       vim.api.nvim_get_mode().mode == "i"
-      and require("blink.cmp.config").enabled()
+      and blink_config.enabled()
   then
     utils.blink_apply_keymap(mappings)
   end

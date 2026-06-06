@@ -114,29 +114,42 @@ function M.setup(opts)
     end),
   })
 
-  -- Autocmd to synchronize Rime input method status when entering a buffer
+  -- Autocmd to synchronize Rime input method status when entering a buffer.
+  -- Handles three buffer types:
+  --   1. Terminal/agent buffers: tracks rime state via buffer var (LSP not available)
+  --   2. Normal buffers: syncs state via LSP toggle when mismatch detected
+  --   3. Other special buffers (quickfix, help etc.): skipped
   api.nvim_create_autocmd({ "BufEnter" }, {
     group = group,
     callback = function(event)
-      -- Extract buffer number from event, return early if invalid
       local bufnr = event and event.buf
       if not bufnr then
         return
       end
 
-      -- Ignore special buffers where Rime is not needed
       local buftype = api.nvim_get_option_value("buftype", { buf = bufnr })
+
+      -- Terminal/agent buffers: track rime state via buffer variable only.
+      -- LSP commands do not execute on terminal buffers, so we just
+      -- record the current global state for consistency.
+      if buftype == "terminal" then
+        pcall(vim.api.nvim_buf_set_var, bufnr, "buf_rime_enabled", utils.global_rime_enabled())
+        return
+      end
+
+      -- Other special buffers: skip entirely (Rime not relevant)
       if buftype ~= "" then
         return
       end
 
-      -- Check global and buffer-specific Rime enabled statuses
+      -- Normal buffer: sync rime state if mismatch
       local rime_status_global = utils.global_rime_enabled()
       local rime_status_buf = utils.buf_rime_enabled(bufnr)
-
-      -- Toggle Rime if there's a mismatch between global and buffer statuses
       if rime_status_buf ~= rime_status_global then
-        utils.toggle_rime()
+        local client = utils.get_any_rime_ls_client()
+        if client then
+          utils.toggle_rime(client)
+        end
       end
     end,
   })

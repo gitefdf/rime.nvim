@@ -49,7 +49,7 @@ https://github.com/liubianshi/cmp-lsp-rimels/assets/24829102/f6d76a3e-3712-4736-
 {
   "liubianshi/cmp-lsp-rimels",
   keys = {{"<localleader>f", mode = "i"}},
-  branch = "blink.cmp",
+  branch = "main",
   config = function()
     require('rimels').setup({})
   end,
@@ -62,7 +62,7 @@ https://github.com/liubianshi/cmp-lsp-rimels/assets/24829102/f6d76a3e-3712-4736-
 {
   "liubianshi/cmp-lsp-rimels",
   keys = {{"<localleader>f", mode = "i"}},
-  branch = "blink.cmp",
+  branch = "main",
   config = function()
     vim.system({'rime_ls', '--listen', '127.0.0.1:9257'}, {detach = true})
     require('rimels').setup({
