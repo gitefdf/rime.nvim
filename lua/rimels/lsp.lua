@@ -62,12 +62,22 @@ function M.buf_get_rime_ls_client(bufnr)
   return nil
 end
 
+-- rime_ls 客户端缓存（模块级，避免每次按键扫描全部 LSP 客户端）
+local _cached_rime_client = nil
+
 --- 按名称查找任意 rime_ls 客户端（不限 buffer 附着）
+--- 结果在模块级缓存，客户端生命周期内不会改变
 --- 当无法通过 buffer 获取客户端时使用（如 terminal/special buffer）
 --- @return table|nil 返回第一个 rime_ls 客户端或 nil
 function M.get_any_rime_ls_client()
+  if _cached_rime_client ~= nil then
+    return _cached_rime_client
+  end
   local clients = vim.lsp.get_clients { name = "rime_ls" }
-  return clients[1]
+  if #clients > 0 then
+    _cached_rime_client = clients[1]
+  end
+  return _cached_rime_client
 end
 
 --- 检查指定缓冲区是否已启用 Rime

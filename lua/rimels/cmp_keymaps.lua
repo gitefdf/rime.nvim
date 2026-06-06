@@ -94,15 +94,15 @@ function M.autotoggle_backspace(info)
   -- 删除的空格前是一个空格分隔的 WORD ，或者处在英文输入环境下时，
   -- 切换成英文输入法
   -- 否则切换成中文输入法
-  local client = utils.get_any_rime_ls_client()
+  local rime_enabled = utils.global_rime_enabled() -- 缓存，避免重复 pcall
   if utils.is_typing_english(1, ctx) then
-    if utils.global_rime_enabled() then
-      utils.toggle_rime(client)
+    if rime_enabled then
+      utils.toggle_rime(utils.get_any_rime_ls_client())
     end
     return rc.toggle_off
   else
-    if not utils.global_rime_enabled() then
-      utils.toggle_rime(client)
+    if not rime_enabled then
+      utils.toggle_rime(utils.get_any_rime_ls_client())
     end
     return rc.toggle_on
   end
@@ -130,8 +130,9 @@ function M.autotoggle_space(info)
   -- 在英文输入状态下，如果光标后为英文符号，则不切换成中文输入状态
   -- 例如：(abc|)
   local char_after = utils.get_chars_after_cursor(1, ctx)
+  local rime_enabled = utils.global_rime_enabled() -- 缓存，避免重复 pcall
   if
-    not utils.global_rime_enabled()
+    not rime_enabled
     and char_after
     and char_after ~= ""
     and char_after:match "[!-~]"
@@ -141,15 +142,14 @@ function M.autotoggle_space(info)
 
   -- 最后一个字符为英文字符，数字或标点符号时，切换为中文输入法
   -- 否则切换为英文输入法
-  local client = utils.get_any_rime_ls_client()
   if word_before:match "[%w%p]" then
-    if not utils.global_rime_enabled() then
-      utils.toggle_rime(client)
+    if not rime_enabled then
+      utils.toggle_rime(utils.get_any_rime_ls_client())
     end
     return rc.toggle_on
   else
-    if utils.global_rime_enabled() then
-      utils.toggle_rime(client)
+    if rime_enabled then
+      utils.toggle_rime(utils.get_any_rime_ls_client())
     end
     return rc.toggle_off
   end
@@ -205,13 +205,15 @@ end
 
 -- <Space> -------------------------------------------------------------- {{{3
 M.keymaps["<Space>"] = utils.generate_mapping(function(_)
-  -- 仅在变量存在时才清理，避免每次空格都触发 pcall 异常处理
-  if pcall(vim.api.nvim_buf_get_var, 0, "rimels_last_entry") then
-    vim.api.nvim_buf_del_var(0, "rimels_last_entry")
-  end
+  -- 仅在进入补全模式时才清理上次条目，不在每次空格做无用功
   if not utils.is_cmp_visible() then
     M.autotoggle_space() -- info 不传，内部按需获取
     return utils.fallback("<Space>")
+  end
+
+  -- 补全可见：清理旧状态并预取 inspect_pos 供后续共享
+  if pcall(vim.api.nvim_buf_get_var, 0, "rimels_last_entry") then
+    vim.api.nvim_buf_del_var(0, "rimels_last_entry")
   end
 
   -- 补全可见时预取 inspect_pos，后续 autotoggle_space 和

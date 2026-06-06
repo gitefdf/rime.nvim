@@ -14,7 +14,7 @@ local function validate_opts(user)
 
   -- 检查常见配置字段的类型
   local checks = {
-    { "cmd", { "string", "table" } },
+    { "cmd", { "string", "table", "function" } },
     { "rime_user_dir", { "string" } },
     { "shared_data_dir", { "string" } },
     { "max_candidates", { "number" } },
