@@ -1,6 +1,6 @@
 local utils = require "rimels.utils"
 
-local M = {}
+local M = { keymaps = {} }
 
 -- 模块级标记：避免兼容层未初始化时重复弹出警告
 local _warned_missing_setup = false
@@ -349,7 +349,12 @@ end)
 function M:launch(disable)
   -- 延迟加载 keymaps，避免模块载入时触发 blink.cmp 初始化
   if not _keymaps_loaded then
-    self.keymaps = utils.get_mappings()
+    local base = utils.get_mappings()
+    -- 将模块顶层设置的按键覆盖合并到基础映射中
+    for k, v in pairs(self.keymaps) do
+      base[k] = v
+    end
+    self.keymaps = base
     _keymaps_loaded = true
   end
   local mappings = utils.filter_cmp_keymaps(self.keymaps, disable or {})
