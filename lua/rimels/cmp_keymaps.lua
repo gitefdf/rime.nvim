@@ -69,95 +69,6 @@ function M:setup(opts)
   return self
 end
 
---- @param info table|nil 可选的 vim.inspect_pos() 结果
-function M.autotoggle_backspace(info)
-  local rc = { not_toggle = 0, toggle_off = 1, toggle_on = 2 }
-  if not utils.buf_rime_enabled() or M.in_english_environment(info) then
-    return rc.not_toggle
-  end
-
-  -- 统一获取光标上下文，避免重复 API 调用
-  local ctx = utils.get_cursor_context()
-  if not ctx then
-    return rc.not_toggle
-  end
-
-  -- 只有在删除空格时才启用输入法切换功能
-  local word_before_1 = utils.get_chars_before_cursor(1, 1, ctx)
-  if not word_before_1 or word_before_1 ~= " " then
-    return rc.not_toggle
-  end
-
-  -- 删除连续空格或行首空格时不启动输入法切换功能
-  local word_before_2 = utils.get_chars_before_cursor(2, 1, ctx)
-  if not word_before_2 or word_before_2 == " " then
-    return rc.not_toggle
-  end
-
-  -- 删除的空格前是一个空格分隔的 WORD ，或者处在英文输入环境下时，
-  -- 切换成英文输入法
-  -- 否则切换成中文输入法
-  local rime_enabled = utils.global_rime_enabled() -- 缓存，避免重复 pcall
-  if utils.is_typing_english(1, ctx) then
-    if rime_enabled then
-      utils.toggle_rime(utils.get_any_rime_ls_client())
-    end
-    return rc.toggle_off
-  else
-    if not rime_enabled then
-      utils.toggle_rime(utils.get_any_rime_ls_client())
-    end
-    return rc.toggle_on
-  end
-end
-
---- @param info table|nil 可选的 vim.inspect_pos() 结果
-function M.autotoggle_space(info)
-  local rc = { not_toggle = 0, toggle_off = 1, toggle_on = 2 }
-  if not utils.buf_rime_enabled() or M.in_english_environment(info) then
-    return rc.not_toggle
-  end
-
-  -- 统一获取光标上下文，避免重复 nvim_win_get_cursor + nvim_get_current_line
-  local ctx = utils.get_cursor_context()
-  if not ctx then
-    return rc.not_toggle
-  end
-
-  -- 行首输入空格或输入连续空格时不考虑输入法切换
-  local word_before = utils.get_chars_before_cursor(1, 1, ctx)
-  if not word_before or word_before == " " then
-    return rc.not_toggle
-  end
-
-  -- 在英文输入状态下，如果光标后为英文符号，则不切换成中文输入状态
-  -- 例如：(abc|)
-  local char_after = utils.get_chars_after_cursor(1, ctx)
-  local rime_enabled = utils.global_rime_enabled() -- 缓存，避免重复 pcall
-  if
-    not rime_enabled
-    and char_after
-    and char_after ~= ""
-    and char_after:match "[!-~]"
-  then
-    return rc.not_toggle
-  end
-
-  -- 最后一个字符为英文字符，数字或标点符号时，切换为中文输入法
-  -- 否则切换为英文输入法
-  if word_before:match "[%w%p]" then
-    if not rime_enabled then
-      utils.toggle_rime(utils.get_any_rime_ls_client())
-    end
-    return rc.toggle_on
-  else
-    if rime_enabled then
-      utils.toggle_rime(utils.get_any_rime_ls_client())
-    end
-    return rc.toggle_off
-  end
-end
-
 --- 判断输入法候选词是否应该上屏
 --- 统一获取一次 vim.inspect_pos() 结果，传给所有探针避免重复调用
 --- @param entry table 补全条目
@@ -210,7 +121,6 @@ end
 M.keymaps["<Space>"] = utils.generate_mapping(function(_)
   -- 仅在进入补全模式时才清理上次条目，不在每次空格做无用功
   if not utils.is_cmp_visible() then
-    M.autotoggle_space() -- info 不传，内部按需获取
     return utils.fallback("<Space>")
   end
 
@@ -219,8 +129,6 @@ M.keymaps["<Space>"] = utils.generate_mapping(function(_)
     vim.api.nvim_buf_del_var(0, "rimels_last_entry")
   end
 
-  -- 补全可见时预取 inspect_pos，后续 autotoggle_space 和
-  -- input_method_take_effect 可共享，避免重复昂贵调用
   local info = vim.inspect_pos()
   local select_entry = utils.get_selected_entry()
   local first_entry = utils.get_first_entry()
@@ -229,7 +137,6 @@ M.keymaps["<Space>"] = utils.generate_mapping(function(_)
     if utils.is_rime_entry(select_entry) then
       utils.cmp_confirm(false)
     else
-      M.autotoggle_space(info)
       return utils.fallback("<Space>")
     end
   end
@@ -246,7 +153,6 @@ M.keymaps["<Space>"] = utils.generate_mapping(function(_)
     return utils.cmp_confirm(true)
   end
 
-  M.autotoggle_space(info)
   return utils.fallback("<Space>")
 end)
 
@@ -297,19 +203,7 @@ M.keymaps["]"] = rime_take_char("]", "last")
 
 -- <bs> ----------------------------------------------------------------- {{{3
 M.keymaps["<BS>"] = utils.generate_mapping(function(_)
-  if not utils.is_cmp_visible() then
-    local re = M.autotoggle_backspace()
-    if re == 1 then
-      utils.cmp_close()
-      utils.feedkey("<left>", "n")
-    else
-      return utils.fallback("<BS>")
-    end
-  else
-    return utils.fallback("<BS>")
-  end
-
-  return utils.cmp_without_processing()
+  return utils.fallback("<BS>")
 end)
 
 function M:launch(disable)

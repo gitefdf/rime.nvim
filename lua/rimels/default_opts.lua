@@ -12,12 +12,6 @@ local M = {
   docs = {
     description = [[https://www.github.com/wlh320/rime-ls, A language server for librime]],
   },
-  keys = {
-    start = ";f",
-    stop = ";;",
-    esc = ";j",
-    undo = ";u",
-  },
   max_candidates = 9,
   schema_trigger_character = "&", -- [since v0.2.0] 当输入此字符串时请求补全会触发 “方案选单”
   probes = {

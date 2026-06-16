@@ -1,8 +1,8 @@
 --- LSP 客户端管理模块
 --- 负责 rime_ls 的生命周期、配置、状态切换和 autocmd 创建
 
-local cmp = require "rimels.cmp"
-local text = require "rimels.text"
+-- cmp 和 text 模块已不再需要（旧版 inoremap 函数已移除）
+-- 如需补全交互，请直接 require "rimels.cmp"
 
 local M = {}
 
@@ -179,104 +179,6 @@ function M.create_command_toggle_rime(client)
   end, { nargs = "?", desc = "Toggle Rime" })
 end
 
---- 创建启动输入法的按键映射（esc 退出插入模式）
---- @param key string 按键
-function M.create_inoremap_esc(key)
-  vim.keymap.set(
-    "i",
-    key,
-    "<cmd>stopinsert<cr>",
-    { desc = "Stop insert", noremap = true, buffer = true }
-  )
-end
-
---- 创建启动输入法的按键映射
---- @param client table rime_ls 客户端
---- @param key string 按键
-function M.create_inoremap_start_rime(client, key)
-  vim.keymap.set("i", key, function()
-    if not M.global_rime_enabled() then
-      M.toggle_rime(client)
-    end
-    if not M.buf_rime_enabled() then
-      M.buf_toggle_rime(0, true)
-    end
-  end, {
-    desc = "Start Chinese Input Method",
-    noremap = true,
-    buffer = true,
-  })
-end
-
---- 创建停止输入法的按键映射
---- @param client table rime_ls 客户端
---- @param key string 按键
-function M.create_inoremap_stop_rime(client, key)
-  vim.keymap.set("i", key, function()
-    if cmp.is_cmp_visible() then
-      cmp.cmp_close()
-    end
-    if M.global_rime_enabled() then
-      M.toggle_rime(client)
-    end
-    if M.buf_rime_enabled() then
-      M.buf_toggle_rime(0, true)
-    end
-  end, {
-    desc = "Stop Chinese Input Method",
-    noremap = true,
-    buffer = true,
-  })
-end
-
---- 创建撤销上屏的按键映射
---- @param key string 按键
-function M.create_inoremap_undo(key)
-  local fallback_fn = function()
-    local keys = vim.api.nvim_replace_termcodes(key, true, false, true)
-    vim.api.nvim_feedkeys(keys, "n", false)
-  end
-
-  vim.keymap.set("i", key, function()
-    -- Use vim.b for buffer-local variables for better performance and readability
-    if vim.b.rimels_last_entry == nil then
-      return fallback_fn()
-    end
-    if cmp.is_cmp_visible() then
-      return fallback_fn()
-    end
-
-    local entry = vim.b.rimels_last_entry
-    -- Guard against malformed entry
-    if
-        not entry.filterText
-        or not entry.textEdit
-        or not entry.textEdit.newText
-        or vim.fn.line "." ~= entry.textEdit.range["end"].line + 1
-    then
-      return fallback_fn()
-    end
-
-    local text_cmp = entry.textEdit.newText
-    local text_input = entry.filterText
-    local content_before = text.get_content_before_cursor(0) or ""
-
-    -- Ensure the text before the cursor ends with the completed text
-    if not content_before:match(vim.pesc(text_cmp) .. "$") then
-      return fallback_fn()
-    end
-
-    -- Undo the completion by deleting characters and re-inserting original input
-    local char_num = vim.fn.strchars(text_cmp)
-    text.feedkey(string.rep("<BS>", char_num), "n")
-
-    text_input = text_input:gsub(".*_", "")
-    vim.schedule(function()
-      vim.api.nvim_put({ text_input }, "c", false, true)
-    end)
-  end, { desc = "rimels: undo last completion", noremap = true, buffer = true })
-end
-
 --- rime_ls 未启动时的错误提示
 function M.error_rime_ls_not_start_yet()
   local status_ok, notify = pcall(require, "notify")
@@ -333,10 +235,6 @@ function M.rime_ls_setup(opts)
     M.create_command_toggle_rime(client)
     M.create_command_rime_sync()
     M.create_autocmd_toggle_rime_according_buffer_status(client)
-    M.create_inoremap_start_rime(client, opts.keys.start)
-    M.create_inoremap_stop_rime(client, opts.keys.stop)
-    M.create_inoremap_esc(opts.keys.esc)
-    M.create_inoremap_undo(opts.keys.undo)
   end
 
   local blink = get_blink_cmp()

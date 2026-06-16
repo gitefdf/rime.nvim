@@ -20,13 +20,6 @@ function M.setup(opts)
   -- Initialize rime language server
   utils.rime_ls_setup(opts)
 
-  -- Setup input method toggle keymap
-  vim.keymap.set({ "i" }, opts.keys.start, utils.start_rime_ls, {
-    silent = true,
-    noremap = true,
-    desc = "Toggle Input Method",
-  })
-
   -- Initialize and configure completion keymaps
   M.keymaps = require("rimels.cmp_keymaps")
     :setup({
@@ -37,6 +30,35 @@ function M.setup(opts)
 
   -- Store configuration for later access
   M.opts = opts
+
+  -- <C-x> 切换：rime_ls ON ↔ OFF，同时反向管理 fcitx5 系统输入法
+  vim.keymap.set("i", "<C-x>", function()
+    local client = utils.get_any_rime_ls_client()
+    if not client then
+      return
+    end
+
+    -- 读取当前 rime_ls 状态，然后发送切换请求
+    local rime_enabled = utils.global_rime_enabled()
+    client:request(
+      "workspace/executeCommand",
+      { command = "rime-ls.toggle-rime" },
+      function(_, result, ctx, _)
+        if ctx and ctx.client_id == client.id and result ~= nil then
+          vim.api.nvim_set_var("nvim_rime#global_rime_enabled", result)
+        end
+      end
+    )
+
+    -- rime_ls OFF → fcitx5 ON；rime_ls ON → fcitx5 OFF
+    if rime_enabled then
+      vim.fn.system("fcitx5-remote -o")
+      vim.notify("rime_ls OFF · fcitx5 ON", vim.log.levels.INFO)
+    else
+      vim.fn.system("fcitx5-remote -c")
+      vim.notify("rime_ls ON · fcitx5 OFF", vim.log.levels.INFO)
+    end
+  end, { desc = "Toggle Rime input mode", noremap = true })
 
   -- Autocmd to enhance Blink completion behavior for numbers and punctuation with Rime
   -- - When Blink shows completion (User BlinkCmpShow), if the last typed character is a number (1-9)
@@ -150,6 +172,27 @@ function M.setup(opts)
         if client then
           utils.toggle_rime(client)
         end
+      end
+    end,
+  })
+
+  -- 管理 fcitx5 系统输入法：在 rime_ls OFF 时自动管理 fcitx5 状态
+  local fcitx5_group = api.nvim_create_augroup("rimels_fcitx5", { clear = true })
+
+  api.nvim_create_autocmd("InsertEnter", {
+    group = fcitx5_group,
+    callback = function()
+      if not utils.global_rime_enabled() then
+        vim.fn.system("fcitx5-remote -o")
+      end
+    end,
+  })
+
+  api.nvim_create_autocmd("InsertLeave", {
+    group = fcitx5_group,
+    callback = function()
+      if not utils.global_rime_enabled() then
+        vim.fn.system("fcitx5-remote -c")
       end
     end,
   })
