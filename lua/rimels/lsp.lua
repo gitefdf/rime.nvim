@@ -346,7 +346,7 @@ function M.toggle_rime(client, synchronously)
 
         -- Update global status only for the correct client and valid result
         if ctx and ctx.client_id == client.id and result ~= nil then
-          vim.api.nvim_set_var(GLOBAL_RIME_VAR, true)
+          vim.api.nvim_set_var(GLOBAL_RIME_VAR, result)
         else
           vim.api.nvim_set_var(GLOBAL_RIME_VAR, false)
         end

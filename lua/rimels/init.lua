@@ -17,6 +17,10 @@ function M.setup(opts)
   -- Merge user options with defaults
   opts = require("rimels.config").update_option(opts or {})
 
+  -- 默认状态：rime_ls ON，fcitx5 OFF
+  vim.api.nvim_set_var("nvim_rime#global_rime_enabled", true)
+  vim.fn.system("fcitx5-remote -c")
+
   -- Initialize rime language server
   utils.rime_ls_setup(opts)
 
